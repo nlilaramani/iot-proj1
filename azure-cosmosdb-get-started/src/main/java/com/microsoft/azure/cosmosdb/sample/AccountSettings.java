@@ -49,11 +49,11 @@ public class AccountSettings {
             System.getProperty("ACCOUNT_KEY", 
                     StringUtils.defaultString(StringUtils.trimToNull(
                             System.getenv().get("ACCOUNT_KEY")),
-                            "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="));
+                            "qpxkmRsywiwsDF2dyXR5PquBc1txM1Mfn2VN6cHOSpk47RW1I1KyTsfAJ8wbNYs99drnATZfzBYp3TcnQ3nsVA=="));
 
     public static String HOST =
             System.getProperty("ACCOUNT_HOST",
                     StringUtils.defaultString(StringUtils.trimToNull(
                             System.getenv().get("ACCOUNT_HOST")),
-                            "https://localhost:443/"));
+                            "https://1116a235-0ee0-4-231-b9ee.documents.azure.com:443/"));
 }

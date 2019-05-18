@@ -58,6 +58,9 @@ public class Main {
 
     private final String databaseName = "AzureSampleFamilyDB";
     private final String collectionName = "FamilyCollection";
+    
+    private final String iotDbName="AzureIotDB";
+    private final String iotCollectionName="TempCollection";
 
     public Main() {
         executorService = Executors.newFixedThreadPool(100);
@@ -93,10 +96,14 @@ public class Main {
      * @param args command line args.
      */
     public static void main(String[] args) {
+        
+        System.setProperty("ACCOUNT_HOST", "https://1116a235-0ee0-4-231-b9ee.documents.azure.com:443/");
+        System.setProperty("ACCOUNT_KEY", "qpxkmRsywiwsDF2dyXR5PquBc1txM1Mfn2VN6cHOSpk47RW1I1KyTsfAJ8wbNYs99drnATZfzBYp3TcnQ3nsVA==");
         Main p = new Main();
 
         try {
-            p.getStartedDemo();
+            //p.getStartedDemo();
+            p.iotDemo();
             System.out.println(String.format("Demo complete, please hold while resources are released"));
         } catch (Exception e) {
             System.err.println(String.format("DocumentDB GetStarted failed with %s", e));
@@ -105,6 +112,132 @@ public class Main {
             p.close();
         }
         System.exit(0);
+    }
+
+    
+    private void iotDemo() throws Exception{
+        client = new AsyncDocumentClient.Builder()
+                .withServiceEndpoint(AccountSettings.HOST)
+                .withMasterKeyOrResourceToken(AccountSettings.MASTER_KEY)
+                .withConnectionPolicy(ConnectionPolicy.GetDefault())
+                .withConsistencyLevel(ConsistencyLevel.Eventual)
+                .build();
+        createIotDatabaseIfNotExists();
+        createIotDocumentCollectionIfNotExists();
+        Vector v = VectorCollection.getFirstVector();
+        
+        ArrayList<Vector> vectorsToCreate = new ArrayList<>();
+        vectorsToCreate.add(v);
+        createVectorsAndWaitForCompletion(vectorsToCreate);
+
+    }
+
+    private void createIotDatabaseIfNotExists() throws Exception {
+        writeToConsoleAndPromptToContinue(
+                "Check if database " + iotDbName + " exists.");
+
+        String databaseLink = String.format("/dbs/%s", iotDbName);
+
+        Observable<ResourceResponse<Database>> databaseReadObs =
+                client.readDatabase(databaseLink, null);
+
+        Observable<ResourceResponse<Database>> databaseExistenceObs =
+                databaseReadObs
+                        .doOnNext(x -> {
+                            System.out.println("database " + iotDbName+ " already exists.");
+                        })
+                        .onErrorResumeNext(
+                                e -> {
+                                    // if the database doesn't already exists
+                                    // readDatabase() will result in 404 error
+                                    if (e instanceof DocumentClientException) {
+                                        DocumentClientException de = (DocumentClientException) e;
+                                        // if database
+                                        if (de.getStatusCode() == 404) {
+                                            // if the database doesn't exist, create it.
+                                            System.out.println("database " + iotDbName + " doesn't existed,"
+                                                    + " creating it...");
+
+                                            Database dbDefinition = new Database();
+                                            dbDefinition.setId(iotDbName);
+
+                                            return client.createDatabase(dbDefinition, null);
+                                        }
+                                    }
+
+                                    // some unexpected failure in reading database happened.
+                                    // pass the error up.
+                                    System.err.println("Reading database " + iotDbName + " failed.");
+                                    return Observable.error(e);
+                                });
+
+
+        // wait for completion,
+        // as waiting for completion is a blocking call try to
+        // provide your own scheduler to avoid stealing netty io threads.
+        databaseExistenceObs.toCompletable().await();
+
+        System.out.println("Checking database " + iotDbName + " completed!\n");
+    }
+
+    private void createIotDocumentCollectionIfNotExists() throws Exception {
+        writeToConsoleAndPromptToContinue(
+                "Check if collection " + iotCollectionName + " exists.");
+
+        // query for a collection with a given id
+        // if it exists nothing else to be done
+        // if the collection doesn't exist, create it.
+
+        String databaseLink = String.format("/dbs/%s", iotDbName);
+
+        client.queryCollections(databaseLink,
+                new SqlQuerySpec("SELECT * FROM r where r.id = @id",
+                        new SqlParameterCollection(
+                                new SqlParameter("@id", iotCollectionName))), null)
+                .single() // we know there is only single page of result (empty or with a match)
+                .flatMap(page -> {
+                    if (page.getResults().isEmpty()) {
+                        // if there is no matching collection create the collection.
+                        DocumentCollection collection = new DocumentCollection();
+                        collection.setId(iotCollectionName);
+                        System.out.println("Creating collection " + iotCollectionName);
+
+                        return client.createCollection(databaseLink, collection, null);
+                    } else {
+                        // collection already exists, nothing else to be done.
+                        System.out.println("Collection " + iotCollectionName + "already exists");
+                        return Observable.empty();
+                    }
+                }).toCompletable().await();
+
+        System.out.println("Checking collection " + iotCollectionName + " completed!\n");
+    }
+
+    private void createVectorsAndWaitForCompletion(List<Vector> vectors) throws Exception {
+        String collectionLink = String.format("/dbs/%s/colls/%s", iotDbName, iotCollectionName);
+
+        List<Observable<ResourceResponse<Document>>> createDocumentsOBs = new ArrayList<>();
+        for (Vector v : vectors) {
+            Observable<ResourceResponse<Document>> obs = client.createDocument(
+                    collectionLink, v, new RequestOptions(), true);
+            createDocumentsOBs.add(obs);
+        }
+
+        Double totalRequestCharge = Observable.merge(createDocumentsOBs)
+                .map(ResourceResponse::getRequestCharge)
+                .observeOn(scheduler) // the scheduler will be used for the following work
+                .map(charge -> {
+                    // as we don't want to run heavyWork() on netty IO thread, we provide the custom scheduler
+                    // for switching from netty IO thread to user thread.
+                    heavyWork();
+                    return charge;
+                })
+                .reduce((sum, value) -> sum + value)
+                .toBlocking().single();
+
+                writeToConsoleAndPromptToContinue(String.format("Created %d documents with total request charge of %.2f",
+                vectors.size(),
+                totalRequestCharge));
     }
 
     private void getStartedDemo() throws Exception {
